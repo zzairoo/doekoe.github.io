@@ -129,6 +129,12 @@ h2 {
   margin-bottom: 24px;
 }
 
+.locked-panel {
+  max-width: 720px;
+  margin: 0 auto;
+  text-align: center;
+}
+
 .dashboard-heading {
   margin-bottom: 14px;
 }

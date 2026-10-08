@@ -178,6 +178,7 @@ function App() {
   }, 0);
   const stakeAmount = Number(stake);
   const canAddMatch = stakeAmount > 0 && winnerIds.length > 0 && loserIds.length > 0;
+  const roomLocked = isSupabaseConfigured && !activeRoom;
 
   async function connectRoom(event: FormEvent) {
     event.preventDefault();
@@ -321,10 +322,20 @@ function App() {
           </p>
         </div>
         <div className="hero-card">
-          <span>Total in play</span>
-          <strong>{currency.format(totalInPlay)}</strong>
-          <span>Matches tracked</span>
-          <strong>{data.matches.length}</strong>
+          {roomLocked ? (
+            <>
+              <span>Status</span>
+              <strong>Locked</strong>
+              <span>Enter a room name and password to view or edit data.</span>
+            </>
+          ) : (
+            <>
+              <span>Total in play</span>
+              <strong>{currency.format(totalInPlay)}</strong>
+              <span>Matches tracked</span>
+              <strong>{data.matches.length}</strong>
+            </>
+          )}
         </div>
       </section>
 
@@ -351,6 +362,14 @@ function App() {
         )}
       </section>
 
+      {roomLocked ? (
+        <section className="panel locked-panel">
+          <p className="eyebrow">Locked</p>
+          <h2>Join a shared room first</h2>
+          <p className="helper-text">Players, matches, payouts, and editing controls are hidden until the correct room password is entered.</p>
+        </section>
+      ) : (
+        <>
       <section className="panel dashboard-panel">
         <div className="panel-heading dashboard-heading">
           <div>
@@ -376,7 +395,7 @@ function App() {
           )}
         </div>
 
-        {obliged.length > 6 && <p className="small-print">Showing top 6 payments. See the settlement panel for the full list.</p>}
+        {obliged.length > 6 && <p className="small-print">Showing top 6 payments.</p>}
       </section>
 
       <section className="grid advanced-grid">
@@ -524,6 +543,8 @@ function App() {
         </div>
 
       </section>
+        </>
+      )}
     </main>
   );
 }
