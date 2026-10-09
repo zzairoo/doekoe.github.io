@@ -482,7 +482,10 @@ function App() {
                   <strong>{playerNameById.get(payout.from)}</strong>
                   <span>pays {playerNameById.get(payout.to)}</span>
                 </div>
-                <strong>{currency.format(payout.amount)}</strong>
+                <div className="dashboard-amount">
+                  {payout.amount >= MIN_PAYOUT && <span className="pay-now">PAY NOW!</span>}
+                  <strong>{currency.format(payout.amount)}</strong>
+                </div>
               </article>
             ))
           )}
