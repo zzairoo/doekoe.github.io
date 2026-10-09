@@ -215,7 +215,7 @@ function App() {
     return roundMoney(sum + match.stake * matchPayers);
   }, 0);
   const stakeAmount = Number(stake);
-  const canAddMatch = canManage && stakeAmount > 0 && winnerIds.length > 0 && loserIds.length > 0;
+  const canAddMatch = stakeAmount > 0 && winnerIds.length > 0 && loserIds.length > 0;
   const roomLocked = isSupabaseConfigured && !activeRoom;
 
   function unlockAdmin(event: FormEvent) {
@@ -438,7 +438,7 @@ function App() {
           <div>
             <p className="eyebrow">Admin</p>
             <h2>{canManage ? "Editing unlocked" : "Enter code to edit"}</h2>
-            <p className="helper-text">Adding/removing players and changing match history requires the admin code.</p>
+            <p className="helper-text">Adding/removing players and deleting match history requires the admin code.</p>
             {adminError && <p className="error-text">{adminError}</p>}
           </div>
 
@@ -610,7 +610,6 @@ function App() {
               <button className="full-button" type="submit" disabled={!canAddMatch}>
                 <Plus size={18} /> Add match
               </button>
-              {!canManage && <p className="small-print">Unlock admin editing to add match history.</p>}
             </form>
           </section>
 
