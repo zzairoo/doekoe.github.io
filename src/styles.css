@@ -125,6 +125,20 @@ h2 {
   margin-bottom: 24px;
 }
 
+.admin-panel {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.8fr) minmax(260px, 0.7fr);
+  gap: 18px;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.admin-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+}
+
 .dashboard-panel {
   margin-bottom: 24px;
 }
@@ -307,6 +321,11 @@ button:disabled {
 
 .compact-row {
   grid-template-columns: minmax(140px, 1fr) auto 46px;
+}
+
+.balance-split {
+  display: grid;
+  gap: 4px;
 }
 
 .balance {
@@ -537,6 +556,8 @@ button:disabled {
   .hero,
   .grid,
   .room-panel,
+  .admin-panel,
+  .admin-form,
   .room-form,
   .dashboard-list {
     grid-template-columns: 1fr;

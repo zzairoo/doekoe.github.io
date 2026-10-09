@@ -10,9 +10,16 @@ type Payout = {
   amount: number;
 };
 
+type PlayerTotals = {
+  incoming: number;
+  outgoing: number;
+};
+
 const STORAGE_KEY = "doekoe.advanced.v1";
 const ROOM_SESSION_KEY = "doekoe.activeRoom.v1";
+const ADMIN_SESSION_KEY = "doekoe.admin.v1";
 const MIN_PAYOUT = 10;
+const ADMIN_CODE = import.meta.env.VITE_ADMIN_CODE?.trim() ?? "";
 const EMPTY_DATA: AppData = { players: [], matches: [] };
 
 const currency = new Intl.NumberFormat("nl-NL", {
@@ -43,7 +50,7 @@ async function hashPassword(value: string) {
 }
 
 function calculateBalances(players: Player[], matches: Match[]) {
-  const balances = new Map(players.map((player) => [player.id, 0]));
+  const playerIds = new Set(players.map((player) => player.id));
   const pairTotals = new Map<string, Payout>();
 
   for (const match of matches) {
@@ -51,10 +58,7 @@ function calculateBalances(players: Player[], matches: Match[]) {
       const payers = match.receiveFromByWinner[winnerId]?.length ? match.receiveFromByWinner[winnerId] : match.loserIds;
 
       for (const payerId of payers) {
-        if (payerId === winnerId || !balances.has(payerId)) continue;
-
-        balances.set(winnerId, roundMoney((balances.get(winnerId) ?? 0) + match.stake));
-        balances.set(payerId, roundMoney((balances.get(payerId) ?? 0) - match.stake));
+        if (payerId === winnerId || !playerIds.has(payerId) || !playerIds.has(winnerId)) continue;
 
         const key = `${payerId}->${winnerId}`;
         const existing = pairTotals.get(key);
@@ -67,10 +71,40 @@ function calculateBalances(players: Player[], matches: Match[]) {
     }
   }
 
-  const payouts = [...pairTotals.values()].sort((a, b) => b.amount - a.amount);
+  const settledPairs = new Map<string, number>();
+  for (const payout of pairTotals.values()) {
+    const [first, second] = [payout.from, payout.to].sort();
+    const key = `${first}<->${second}`;
+    const signedAmount = payout.from === first ? payout.amount : -payout.amount;
+    settledPairs.set(key, roundMoney((settledPairs.get(key) ?? 0) + signedAmount));
+  }
+
+  const payouts = [...settledPairs.entries()]
+    .flatMap(([key, amount]) => {
+      if (amount === 0) return [];
+      const [first, second] = key.split("<->");
+      return [
+        {
+          from: amount > 0 ? first : second,
+          to: amount > 0 ? second : first,
+          amount: Math.abs(amount),
+        },
+      ];
+    })
+    .filter((payout) => payout.amount > 0)
+    .sort((a, b) => b.amount - a.amount);
+
+  const playerTotals = new Map<string, PlayerTotals>(players.map((player) => [player.id, { incoming: 0, outgoing: 0 }]));
+  for (const payout of payouts) {
+    const receiver = playerTotals.get(payout.to);
+    const payer = playerTotals.get(payout.from);
+    if (receiver) receiver.incoming = roundMoney(receiver.incoming + payout.amount);
+    if (payer) payer.outgoing = roundMoney(payer.outgoing + payout.amount);
+  }
 
   return {
-    balances,
+    playerTotals,
+    payouts,
     obliged: payouts.filter((payout) => payout.amount >= MIN_PAYOUT),
     optional: payouts.filter((payout) => payout.amount > 0 && payout.amount < MIN_PAYOUT),
   };
@@ -99,6 +133,9 @@ function App() {
   const [syncStatus, setSyncStatus] = useState(isSupabaseConfigured ? "Local until you join a room" : "Add Supabase env vars to enable shared rooms");
   const [isJoiningRoom, setIsJoiningRoom] = useState(false);
   const skipNextSaveRef = useRef(false);
+  const [adminCode, setAdminCode] = useState("");
+  const [isAdmin, setIsAdmin] = useState(() => localStorage.getItem(ADMIN_SESSION_KEY) === "true");
+  const [adminError, setAdminError] = useState("");
   const [newPlayerName, setNewPlayerName] = useState("");
   const [stake, setStake] = useState("10");
   const [winnerIds, setWinnerIds] = useState<string[]>([]);
@@ -170,15 +207,42 @@ function App() {
     return () => window.clearTimeout(timeoutId);
   }, [activeRoom, data]);
 
+  const canManage = isAdmin && ADMIN_CODE.length > 0;
   const playerNameById = useMemo(() => new Map(data.players.map((player) => [player.id, player.name])), [data.players]);
-  const { balances, obliged } = useMemo(() => calculateBalances(data.players, data.matches), [data.players, data.matches]);
+  const { playerTotals, payouts, obliged } = useMemo(() => calculateBalances(data.players, data.matches), [data.players, data.matches]);
   const totalInPlay = data.matches.reduce((sum, match) => {
     const matchPayers = match.winnerIds.reduce((count, winnerId) => count + (match.receiveFromByWinner[winnerId]?.length || match.loserIds.length), 0);
     return roundMoney(sum + match.stake * matchPayers);
   }, 0);
   const stakeAmount = Number(stake);
-  const canAddMatch = stakeAmount > 0 && winnerIds.length > 0 && loserIds.length > 0;
+  const canAddMatch = canManage && stakeAmount > 0 && winnerIds.length > 0 && loserIds.length > 0;
   const roomLocked = isSupabaseConfigured && !activeRoom;
+
+  function unlockAdmin(event: FormEvent) {
+    event.preventDefault();
+    setAdminError("");
+
+    if (!ADMIN_CODE) {
+      setAdminError("Admin code is not configured.");
+      return;
+    }
+
+    if (adminCode.trim() !== ADMIN_CODE) {
+      setAdminError("Wrong admin code.");
+      return;
+    }
+
+    localStorage.setItem(ADMIN_SESSION_KEY, "true");
+    setIsAdmin(true);
+    setAdminCode("");
+  }
+
+  function lockAdmin() {
+    localStorage.removeItem(ADMIN_SESSION_KEY);
+    setIsAdmin(false);
+    setAdminCode("");
+    setAdminError("");
+  }
 
   async function connectRoom(event: FormEvent) {
     event.preventDefault();
@@ -222,6 +286,7 @@ function App() {
 
   function addPlayer(event: FormEvent) {
     event.preventDefault();
+    if (!canManage) return;
     const name = newPlayerName.trim();
     if (!name) return;
 
@@ -230,6 +295,8 @@ function App() {
   }
 
   function removePlayer(id: string) {
+    if (!canManage) return;
+
     setData((current) => ({
       players: current.players.filter((player) => player.id !== id),
       matches: current.matches
@@ -257,6 +324,8 @@ function App() {
   }
 
   function updatePlayer(id: string, name: string) {
+    if (!canManage) return;
+
     setData((current) => ({ ...current, players: current.players.map((player) => (player.id === id ? { ...player, name } : player)) }));
   }
 
@@ -308,6 +377,8 @@ function App() {
   }
 
   function deleteMatch(id: string) {
+    if (!canManage) return;
+
     setData((current) => ({ ...current, matches: current.matches.filter((match) => match.id !== id) }));
   }
 
@@ -362,6 +433,28 @@ function App() {
         )}
       </section>
 
+      {!roomLocked && (
+        <section className="panel admin-panel">
+          <div>
+            <p className="eyebrow">Admin</p>
+            <h2>{canManage ? "Editing unlocked" : "Enter code to edit"}</h2>
+            <p className="helper-text">Adding/removing players and changing match history requires the admin code.</p>
+            {adminError && <p className="error-text">{adminError}</p>}
+          </div>
+
+          {canManage ? (
+            <button className="secondary-button" type="button" onClick={lockAdmin}>
+              Lock editing
+            </button>
+          ) : (
+            <form className="admin-form" onSubmit={unlockAdmin}>
+              <input value={adminCode} onChange={(event) => setAdminCode(event.target.value)} placeholder="Admin code" type="password" />
+              <button type="submit">Unlock</button>
+            </form>
+          )}
+        </section>
+      )}
+
       {roomLocked ? (
         <section className="panel locked-panel">
           <p className="eyebrow">Locked</p>
@@ -376,14 +469,14 @@ function App() {
             <p className="eyebrow">Dashboard</p>
             <h2>Who pays who</h2>
           </div>
-          <span className="status balanced">{obliged.length} obliged</span>
+          <span className="status balanced">{payouts.length} tracked</span>
         </div>
 
         <div className="dashboard-list">
-          {obliged.length === 0 ? (
-            <div className="empty-state compact-empty">No obliged payments yet. Pair totals start counting from {currency.format(MIN_PAYOUT)}.</div>
+          {payouts.length === 0 ? (
+            <div className="empty-state compact-empty">No outstanding payments yet. Every match is tracked, even below {currency.format(MIN_PAYOUT)}.</div>
           ) : (
-            obliged.slice(0, 6).map((payout) => (
+            payouts.slice(0, 6).map((payout) => (
               <article className="dashboard-payment" key={`dashboard-${payout.from}-${payout.to}`}>
                 <div>
                   <strong>{playerNameById.get(payout.from)}</strong>
@@ -395,7 +488,8 @@ function App() {
           )}
         </div>
 
-        {obliged.length > 6 && <p className="small-print">Showing top 6 payments.</p>}
+        {payouts.length > 6 && <p className="small-print">Showing top 6 payments.</p>}
+        {obliged.length > 0 && <p className="small-print">{obliged.length} payment{obliged.length === 1 ? "" : "s"} are {currency.format(MIN_PAYOUT)} or more.</p>}
       </section>
 
       <section className="grid advanced-grid">
@@ -413,8 +507,8 @@ function App() {
             </div>
 
             <form className="add-player" onSubmit={addPlayer}>
-              <input value={newPlayerName} onChange={(event) => setNewPlayerName(event.target.value)} placeholder="Player name" />
-              <button type="submit">
+              <input value={newPlayerName} onChange={(event) => setNewPlayerName(event.target.value)} placeholder="Player name" disabled={!canManage} />
+              <button type="submit" disabled={!canManage}>
                 <Plus size={18} /> Add
               </button>
             </form>
@@ -424,12 +518,15 @@ function App() {
                 <div className="empty-state">Add your friends before creating a match.</div>
               ) : (
                 data.players.map((player) => {
-                  const balance = balances.get(player.id) ?? 0;
+                  const totals = playerTotals.get(player.id) ?? { incoming: 0, outgoing: 0 };
                   return (
                     <article className="player-row compact-row" key={player.id}>
-                      <input className="name-input" value={player.name} onChange={(event) => updatePlayer(player.id, event.target.value)} aria-label="Player name" />
-                      <strong className={balance >= 0 ? "balance positive" : "balance negative"}>{currency.format(balance)}</strong>
-                      <button className="icon-button" type="button" onClick={() => removePlayer(player.id)} aria-label={`Remove ${player.name}`}>
+                      <input className="name-input" value={player.name} onChange={(event) => updatePlayer(player.id, event.target.value)} aria-label="Player name" disabled={!canManage} />
+                      <div className="balance-split" aria-label={`${player.name} balance`}>
+                        <strong className="balance positive">+{currency.format(totals.incoming)}</strong>
+                        <strong className="balance negative">-{currency.format(totals.outgoing)}</strong>
+                      </div>
+                      <button className="icon-button" type="button" onClick={() => removePlayer(player.id)} aria-label={`Remove ${player.name}`} disabled={!canManage}>
                         <Trash2 size={18} />
                       </button>
                     </article>
@@ -510,6 +607,7 @@ function App() {
               <button className="full-button" type="submit" disabled={!canAddMatch}>
                 <Plus size={18} /> Add match
               </button>
+              {!canManage && <p className="small-print">Unlock admin editing to add match history.</p>}
             </form>
           </section>
 
@@ -532,7 +630,7 @@ function App() {
                       <span>beat {match.loserIds.map((id) => playerNameById.get(id)).join(", ")}</span>
                       <small>{currency.format(match.stake)} per payer-to-winner</small>
                     </div>
-                    <button className="icon-button" type="button" onClick={() => deleteMatch(match.id)} aria-label="Delete match">
+                    <button className="icon-button" type="button" onClick={() => deleteMatch(match.id)} aria-label="Delete match" disabled={!canManage}>
                       <Trash2 size={18} />
                     </button>
                   </article>
